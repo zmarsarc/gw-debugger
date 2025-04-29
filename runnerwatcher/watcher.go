@@ -134,6 +134,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.states[msg.Name] = s.(runnerstate.Model)
 		return m, cmd
 
+	case runnerstate.HeartbeatUpdateMsg:
+		state, ok := m.states[msg.Name]
+		if !ok {
+			return m, nil
+		}
+		s, cmd := state.Update(msg)
+		m.states[msg.Name] = s.(runnerstate.Model)
+		return m, cmd
+
+	case runnerstate.NoHeartbeatErrorMsg:
+		state, ok := m.states[msg.Name]
+		if !ok {
+			return m, nil
+		}
+		s, cmd := state.Update(msg)
+		m.states[msg.Name] = s.(runnerstate.Model)
+		return m, cmd
+
 	case runnerstate.ErrorMsg:
 		state, ok := m.states[msg.Name]
 		if !ok {
