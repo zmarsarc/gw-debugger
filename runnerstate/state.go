@@ -224,3 +224,20 @@ func (s Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return s, nil
 	}
 }
+
+func Header() string {
+	var builder strings.Builder
+	liveStyle := lipgloss.NewStyle().Margin(0, 1).Width(22).Align(lipgloss.Center)
+	busyStyle := lipgloss.NewStyle().Margin(0, 1).Padding(0, 1)
+
+	builder.WriteString(nameStyle.Render("NAME"))
+	builder.WriteString(modelStyle.Render("MODEL"))
+	builder.WriteString(liveStyle.Render("LIFE"))
+
+	builder.WriteString(busyStyle.Render("BUSY"))
+
+	builder.WriteString(timeStyle.Render("CTIME"))
+	builder.WriteString(timeStyle.Render("UTIME"))
+
+	return builder.String()
+}

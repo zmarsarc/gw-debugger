@@ -65,7 +65,6 @@ type Model struct {
 	width  int
 
 	csr int
-	cnt int
 
 	rdb    *redis.Client
 	parent tea.Model
@@ -104,20 +103,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, delayUpdateRunneNames(m.rdb)
 
 	case UpdateRunnerNamesMsg:
-		m.cnt++
-
 		cmd := make([]tea.Cmd, 0)
+		newStates := make(map[string]runnerstate.Model)
 
 		for _, name := range []string(msg) {
-			_, ok := m.states[name]
+			s, ok := m.states[name]
 			if !ok {
 				newState := runnerstate.New(name, m.rdb)
 				cmd = append(cmd, newState.Init())
-				m.states[name] = newState
+				newStates[name] = newState
+			} else {
+				newStates[name] = s
 			}
 		}
+		m.states = newStates
 		cmd = append(cmd, delayUpdateRunneNames(m.rdb))
-
 		return m, tea.Batch(cmd...)
 
 	case tea.WindowSizeMsg:
@@ -167,12 +167,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	titleStyle := lipgloss.NewStyle().Height(1).Width(m.width).Border(lipgloss.NormalBorder()).BorderTop(false).BorderRight(false).BorderLeft(false)
+	titleStyle := lipgloss.NewStyle().Height(1).Width(m.width).
+		Border(lipgloss.NormalBorder()).BorderTop(false).BorderRight(false).BorderLeft(false)
 
-	header := titleStyle.Render(fmt.Sprintf("cnt: %d", m.cnt))
+	counter := fmt.Sprintf("total %d alive %d dead %d idle %d busy %d",
+		len(m.states),
+		countIf(m.states, func(m *runnerstate.Model) bool { return m.Alive && m.Heartbeat != nil }),
+		countIf(m.states, func(m *runnerstate.Model) bool { return !m.Alive || m.Heartbeat == nil }),
+		countIf(m.states, func(m *runnerstate.Model) bool { return !m.Busy }),
+		countIf(m.states, func(m *runnerstate.Model) bool { return m.Busy }),
+	)
+	header := titleStyle.Render(counter)
 
 	var builder strings.Builder
 	builder.WriteString(header + "\n")
+	builder.WriteString(runnerstate.Header() + "\n")
 
 	orderedStates := make([]runnerstate.Model, 0)
 	for _, s := range m.states {
@@ -183,7 +192,7 @@ func (m Model) View() string {
 		return orderedStates[i].Name < orderedStates[j].Name
 	})
 
-	pageSize := m.height - (titleStyle.GetHeight() + 1)
+	pageSize := m.height - (titleStyle.GetHeight() + 1 + 1)
 	pos := m.csr
 	end := pos + pageSize - 1
 	if len(orderedStates) < end {
@@ -196,4 +205,15 @@ func (m Model) View() string {
 	}
 
 	return builder.String()
+}
+
+// Use to count state.
+func countIf(states map[string]runnerstate.Model, cond func(*runnerstate.Model) bool) int {
+	cnt := 0
+	for _, v := range states {
+		if cond(&v) {
+			cnt++
+		}
+	}
+	return cnt
 }
