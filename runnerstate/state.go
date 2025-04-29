@@ -153,7 +153,7 @@ func (s Model) View() string {
 		text := fmt.Sprintf("DEAD - hb %ds before", int(math.Ceil(time.Since(*s.Heartbeat).Seconds())))
 		builder.WriteString(deadStyle.Render(text))
 	case !s.Alive && s.Heartbeat == nil:
-		builder.WriteString(deadStyle.Render("DEAT - no hb"))
+		builder.WriteString(deadStyle.Render("DEAD - no hb"))
 	}
 
 	if s.Busy {
