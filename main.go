@@ -1,20 +1,33 @@
 package main
 
 import (
+	"flag"
 	"fmt"
-	"gw/dispatcher/debugger/runnerwatcher"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/redis/go-redis/v9"
 )
 
-var rdb *redis.Client
-
 func main() {
-	rdb = redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer rdb.Close()
+	var addr string
+	var port int
+	var password string
+	var db int
 
-	if _, err := tea.NewProgram(runnerwatcher.New(rdb, nil), tea.WithAltScreen()).Run(); err != nil {
+	flag.StringVar(&addr, "h", "127.0.0.1", "redis host")
+	flag.IntVar(&port, "p", 6379, "redis port")
+	flag.StringVar(&password, "pwd", "", "password")
+	flag.IntVar(&db, "db", 0, "redis db")
+	flag.Parse()
+
+	app := NewApp()
+	app.rdbConfig = redisConfig{
+		host:     addr,
+		port:     port,
+		password: password,
+		db:       db,
+	}
+
+	if _, err := tea.NewProgram(app, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Println(err)
 	}
 }

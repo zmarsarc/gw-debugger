@@ -12,27 +12,32 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Use to report redis error.
-type ErrorMsg struct {
-	Name string
-	Err  error
+type RunnerStateMsg interface {
+	RunnerName() string
 }
 
 // Use when fetch new runner state.
 type StateUpdateMsg struct {
-	Name  string
-	State map[string]string
+	Name      string
+	State     map[string]string
+	Pending   *redis.XPending
+	Heartbeat *time.Time
+	Err       error
 }
 
-// Error message to report can not find runner heartbeat.
-type NoHeartbeatErrorMsg struct {
-	Name string
+func (m StateUpdateMsg) RunnerName() string {
+	return m.Name
 }
 
 // Message to report runner heartbeat.
 type HeartbeatUpdateMsg struct {
 	Name     string
 	Lasttime string
+	Err      error
+}
+
+func (m HeartbeatUpdateMsg) RunnerName() string {
+	return m.Name
 }
 
 var (
@@ -56,30 +61,42 @@ var (
 			Margin(0, 1).Width(22).Align(lipgloss.Center).Foreground(lipgloss.ANSIColor(0))
 	aliveStyle lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.ANSIColor(10)).
 			Margin(0, 1).Width(22).Align(lipgloss.Center).Foreground(lipgloss.ANSIColor(0))
+	pendingTaskStyle = lipgloss.NewStyle().Width(5).Align(lipgloss.Center).Background(lipgloss.ANSIColor(7)).Foreground(lipgloss.ANSIColor(0)).Margin(0, 1)
 )
 
 // Command update runner state.
 func updateRunnerState(name string, rdb *redis.Client) tea.Cmd {
 	return func() tea.Msg {
-		data, err := rdb.HGetAll(context.Background(), fmt.Sprintf("%s::runner::gw", name)).Result()
-		if err != nil {
-			return ErrorMsg{Name: name, Err: err}
-		}
-		return StateUpdateMsg{Name: name, State: data}
-	}
-}
+		state := StateUpdateMsg{Name: name}
 
-// Command to update runner heartbeat.
-func updateHeartbeatState(name string, rdb *redis.Client) tea.Cmd {
-	return func() tea.Msg {
-		data, err := rdb.Get(context.Background(), fmt.Sprintf("%s::runner::heartbeat::gw", name)).Result()
-		if err != nil {
-			if err == redis.Nil {
-				return NoHeartbeatErrorMsg{Name: name}
-			}
-			return ErrorMsg{Name: name, Err: err}
+		// Read runner state
+		state.State, state.Err = rdb.HGetAll(context.Background(),
+			fmt.Sprintf("%s::runner::gw", name)).Result()
+		if state.Err != nil {
+			return state
 		}
-		return HeartbeatUpdateMsg{Name: name, Lasttime: data}
+
+		// Read heartbeat.
+		hb, err := rdb.Get(context.Background(),
+			fmt.Sprintf("%s::runner::heartbeat::gw", name)).Result()
+		if err != nil {
+			if err != redis.Nil {
+				state.Err = err
+				return state
+			}
+		} else {
+			t, err := time.ParseInLocation(timeParseFormat, hb, time.Local)
+			if err == nil {
+				state.Heartbeat = &t
+			}
+		}
+
+		// Read pending msg.
+		state.Pending, state.Err = rdb.XPending(context.Background(),
+			fmt.Sprintf("%s::runner::stream::gw", name),
+			fmt.Sprintf("%s::runner::readgroup::gw", name)).Result()
+
+		return state
 	}
 }
 
@@ -120,6 +137,7 @@ type Model struct {
 	Busy      bool
 	Alive     bool
 	Heartbeat *time.Time
+	Pending   *redis.XPending
 
 	err error
 	rdb *redis.Client
@@ -130,7 +148,7 @@ func New(name string, rdb *redis.Client) Model {
 }
 
 func (s Model) Init() tea.Cmd {
-	return tea.Batch(updateRunnerState(s.Name, s.rdb), updateHeartbeatState(s.Name, s.rdb))
+	return tea.Batch(updateRunnerState(s.Name, s.rdb))
 }
 
 func (s Model) View() string {
@@ -162,6 +180,12 @@ func (s Model) View() string {
 		builder.WriteString(idleStyle.Render("IDLE"))
 	}
 
+	if s.Pending != nil {
+		builder.WriteString(pendingTaskStyle.Render(fmt.Sprintf("%d", s.Pending.Count)))
+	} else {
+		builder.WriteString(pendingTaskStyle.Render("0"))
+	}
+
 	builder.WriteString(timeStyle.Render(puttyTime(s.Ctime)))
 	builder.WriteString(timeStyle.Render(puttyTime(s.Utime)))
 
@@ -176,6 +200,11 @@ func (s Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if s.Name != msg.Name {
 			return s, nil
+		}
+
+		if msg.Err != nil {
+			s.err = msg.Err
+			return s, delayRunCommand(1, updateRunnerState(s.Name, s.rdb))
 		}
 
 		s.Model = msg.State["model_id"]
@@ -202,22 +231,9 @@ func (s Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.Alive = true
 		}
 
-		return s, delayRunCommand(1, updateRunnerState(s.Name, s.rdb))
+		s.Pending = msg.Pending
+		s.Heartbeat = msg.Heartbeat
 
-	case HeartbeatUpdateMsg:
-		t, err := time.ParseInLocation(timeParseFormat, msg.Lasttime, time.Local)
-		if err != nil {
-			return s, nil
-		}
-		s.Heartbeat = &t
-		return s, delayRunCommand(1, updateHeartbeatState(s.Name, s.rdb))
-
-	case NoHeartbeatErrorMsg:
-		s.Heartbeat = nil
-		return s, delayRunCommand(1, updateHeartbeatState(s.Name, s.rdb))
-
-	case ErrorMsg:
-		s.err = msg.Err
 		return s, delayRunCommand(1, updateRunnerState(s.Name, s.rdb))
 
 	default:
@@ -229,15 +245,17 @@ func Header() string {
 	var builder strings.Builder
 	liveStyle := lipgloss.NewStyle().Margin(0, 1).Width(22).Align(lipgloss.Center)
 	busyStyle := lipgloss.NewStyle().Margin(0, 1).Padding(0, 1)
+	pendingStyle := lipgloss.NewStyle().Width(7).Align(lipgloss.Center)
 
-	builder.WriteString(nameStyle.Render("NAME"))
-	builder.WriteString(modelStyle.Render("MODEL"))
-	builder.WriteString(liveStyle.Render("LIFE"))
+	builder.WriteString(nameStyle.UnsetBold().Render("NAME"))
+	builder.WriteString(modelStyle.Align(lipgloss.Center).Render("MODEL"))
+	builder.WriteString(liveStyle.Align(lipgloss.Center).Render("LIFE"))
 
 	builder.WriteString(busyStyle.Render("BUSY"))
+	builder.WriteString(pendingStyle.Render("PENDING"))
 
-	builder.WriteString(timeStyle.Render("CTIME"))
-	builder.WriteString(timeStyle.Render("UTIME"))
+	builder.WriteString(timeStyle.Align(lipgloss.Center).Render("CTIME"))
+	builder.WriteString(timeStyle.Align(lipgloss.Center).Render("UTIME"))
 
 	return builder.String()
 }

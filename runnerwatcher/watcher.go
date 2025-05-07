@@ -3,6 +3,7 @@ package runnerwatcher
 import (
 	"context"
 	"fmt"
+	"gw/dispatcher/debugger/msgs"
 	"gw/dispatcher/debugger/runnerstate"
 	"sort"
 	"strings"
@@ -54,8 +55,16 @@ func delayUpdateRunneNames(rdb *redis.Client) tea.Cmd {
 	}
 }
 
-func New(rdb *redis.Client, parent tea.Model) Model {
-	return Model{states: make(map[string]runnerstate.Model), rdb: rdb, parent: parent}
+func New() Model {
+	return Model{
+		states: make(map[string]runnerstate.Model),
+		height: 0,
+		width:  0,
+		csr:    0,
+
+		rdb: nil,
+		err: nil,
+	}
 }
 
 type Model struct {
@@ -66,13 +75,12 @@ type Model struct {
 
 	csr int
 
-	rdb    *redis.Client
-	parent tea.Model
-	err    error
+	rdb *redis.Client
+	err error
 }
 
 func (m Model) Init() tea.Cmd {
-	return updateRunneNames(m.rdb)
+	return nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -80,13 +88,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 
+	case msgs.RedisStateMsg:
+		m.rdb = msg.Client
+		if m.rdb != nil {
+			return m, updateRunneNames(m.rdb)
+		} else {
+			return m, nil
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "esc":
-			if m.parent != nil {
-				return m.parent, nil
-			}
-			return m, tea.Quit
 		case "up":
 			if m.csr > 0 {
 				m.csr--
@@ -125,40 +136,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		return m, nil
 
-	case runnerstate.StateUpdateMsg:
-		state, ok := m.states[msg.Name]
+	case runnerstate.RunnerStateMsg:
+		state, ok := m.states[msg.RunnerName()]
 		if !ok {
 			return m, nil
 		}
 		s, cmd := state.Update(msg)
-		m.states[msg.Name] = s.(runnerstate.Model)
-		return m, cmd
-
-	case runnerstate.HeartbeatUpdateMsg:
-		state, ok := m.states[msg.Name]
-		if !ok {
-			return m, nil
-		}
-		s, cmd := state.Update(msg)
-		m.states[msg.Name] = s.(runnerstate.Model)
-		return m, cmd
-
-	case runnerstate.NoHeartbeatErrorMsg:
-		state, ok := m.states[msg.Name]
-		if !ok {
-			return m, nil
-		}
-		s, cmd := state.Update(msg)
-		m.states[msg.Name] = s.(runnerstate.Model)
-		return m, cmd
-
-	case runnerstate.ErrorMsg:
-		state, ok := m.states[msg.Name]
-		if !ok {
-			return m, nil
-		}
-		s, cmd := state.Update(msg)
-		m.states[msg.Name] = s.(runnerstate.Model)
+		m.states[msg.RunnerName()] = s.(runnerstate.Model)
 		return m, cmd
 
 	default:
@@ -167,6 +151,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.rdb == nil {
+		return "Redis disconnected."
+	}
+
 	titleStyle := lipgloss.NewStyle().Height(1).Width(m.width).
 		Border(lipgloss.NormalBorder()).BorderTop(false).BorderRight(false).BorderLeft(false)
 
