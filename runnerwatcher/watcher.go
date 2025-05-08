@@ -103,7 +103,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.csr--
 			}
 		case "down":
-			if m.csr <= len(m.states) {
+			if m.csr < len(m.states)-1 {
 				m.csr++
 			}
 		}
@@ -182,10 +182,7 @@ func (m Model) View() string {
 
 	pageSize := m.height - (titleStyle.GetHeight() + 1 + 1)
 	pos := m.csr
-	end := pos + pageSize - 1
-	if len(orderedStates) < end {
-		end = len(orderedStates)
-	}
+	end := min(pos+pageSize, len(orderedStates))
 
 	for pos < end {
 		builder.WriteString(orderedStates[pos].View() + "\n")
