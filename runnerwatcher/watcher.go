@@ -2,6 +2,7 @@ package runnerwatcher
 
 import (
 	"context"
+	"fmt"
 	"gw/dispatcher/debugger/msgs"
 	"gw/dispatcher/debugger/style"
 	"gw/dispatcher/debugger/theme"
@@ -23,6 +24,7 @@ var (
 	pendingStyle   = style.W().S.Align(lipgloss.Center)
 	ctimeStyle     = style.W().L.Align(lipgloss.Center)
 	utimeStyle     = style.W().L.Align(lipgloss.Center)
+	statusStyle    = style.W().S.Align(lipgloss.Center)
 )
 
 // Define column color modifier.
@@ -189,6 +191,33 @@ func (m Model) View() string {
 	}
 
 	return builder.String()
+}
+
+func (m Model) StatusBarView() string {
+	alive := buildStatusBlock("ALIVE", m.states, func(s *state) bool {
+		return s.Alive && s.Heartbeat != nil
+	})
+	dead := buildStatusBlock("DEAD", m.states, func(s *state) bool {
+		return !s.Alive || s.Heartbeat == nil
+	})
+	idle := buildStatusBlock("IDLE", m.states, func(s *state) bool {
+		return s.Alive && s.Heartbeat != nil && !s.Busy
+	})
+	busy := buildStatusBlock("BUSY", m.states, func(s *state) bool {
+		return s.Alive && s.Heartbeat != nil && s.Busy
+	})
+	total := buildStatusBlock("TOTAL", m.states, func(s *state) bool {
+		return true
+	})
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, total, alive, dead, idle, busy)
+}
+
+func buildStatusBlock(title string, states map[string]state, cond func(*state) bool) string {
+	return lipgloss.JoinVertical(lipgloss.Center,
+		statusStyle.Render(title),
+		statusStyle.Render(fmt.Sprintf("%d", countIf(states, cond))),
+	)
 }
 
 // Use to count state.

@@ -109,11 +109,21 @@ func (a App) View() string {
 	)
 
 	// Build footer, fill the rest of line.
-	footer := leftBorder.Render(lipgloss.JoinVertical(lipgloss.Center,
+	redisStatus := leftBorder.Render(lipgloss.JoinVertical(lipgloss.Center,
 		"Redis",
 		fmt.Sprintf("%s:%d@%d", a.rdbConfig.host, a.rdbConfig.port, a.rdbConfig.db),
 	))
-	renderFooter := footerBox.Width(a.width).Render(footer)
+	statusBar := ""
+	switch model := a.models[a.csr].(type) {
+	case runnerwatcher.Model:
+		statusBar = model.StatusBarView()
+	}
+	space := a.width - lipgloss.Width(redisStatus)
+	renderFooter := footerBox.Width(a.width).Render(
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			redisStatus,
+			lipgloss.PlaceHorizontal(space, lipgloss.Right, statusBar)),
+	)
 
 	// Calc main box height.
 	mainBoxHeight := a.height - lipgloss.Height(renderHeader) - lipgloss.Height(renderFooter)
