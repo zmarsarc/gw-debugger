@@ -176,9 +176,7 @@ func (m Model) View() string {
 		orderedStates = append(orderedStates, s)
 	}
 
-	sort.SliceStable(orderedStates, func(i, j int) bool {
-		return orderedStates[i].Name < orderedStates[j].Name
-	})
+	orderedStates = sortState(orderedStates)
 
 	const headerHeight = 1
 	pageSize := m.height - headerHeight
@@ -194,17 +192,15 @@ func (m Model) View() string {
 }
 
 func (m Model) StatusBarView() string {
-	alive := buildStatusBlock("ALIVE", m.states, func(s *state) bool {
-		return s.Alive && s.Heartbeat != nil
-	})
+	alive := buildStatusBlock("ALIVE", m.states, isAlive)
 	dead := buildStatusBlock("DEAD", m.states, func(s *state) bool {
-		return !s.Alive || s.Heartbeat == nil
+		return !isAlive(s)
 	})
 	idle := buildStatusBlock("IDLE", m.states, func(s *state) bool {
-		return s.Alive && s.Heartbeat != nil && !s.Busy
+		return isAlive(s) && !s.Busy
 	})
 	busy := buildStatusBlock("BUSY", m.states, func(s *state) bool {
-		return s.Alive && s.Heartbeat != nil && s.Busy
+		return isAlive(s) && s.Busy
 	})
 	total := buildStatusBlock("TOTAL", m.states, func(s *state) bool {
 		return true
@@ -246,4 +242,34 @@ func stateTableHeader(width int) string {
 
 	// Fill the rest of this line.
 	return textInverse.Width(width).Render(builder.String())
+}
+
+func isAlive(m *state) bool {
+	return m.Alive && m.Heartbeat != nil
+}
+
+func sortState(states []state) []state {
+	sort.SliceStable(states, func(i, j int) bool {
+		if isAlive(&states[i]) && isAlive(&states[j]) {
+			if states[i].Busy == states[j].Busy {
+				return states[i].Ctime.Unix() > states[j].Ctime.Unix()
+			}
+			if states[i].Busy {
+				return true
+			} else {
+				return false
+			}
+		}
+
+		if isAlive(&states[i]) {
+			return true
+		}
+		if isAlive(&states[j]) {
+			return false
+		}
+
+		return states[i].Ctime.Unix() > states[j].Ctime.Unix()
+	})
+
+	return states
 }
