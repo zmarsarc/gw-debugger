@@ -5,15 +5,30 @@ import (
 	"gw/dispatcher/debugger/keylist"
 	"gw/dispatcher/debugger/msgs"
 	"gw/dispatcher/debugger/runnerwatcher"
+	"gw/dispatcher/debugger/style"
+	"gw/dispatcher/debugger/theme"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/redis/go-redis/v9"
 )
 
-var headerItemStyle = lipgloss.NewStyle().Width(10).Align(lipgloss.Center).Background(lipgloss.ANSIColor(4))
-var headerItemSelectedStyle = lipgloss.NewStyle().Width(10).Align(lipgloss.Center).
-	Background(lipgloss.ANSIColor(7)).Foreground(lipgloss.ANSIColor(0)).Bold(true)
+// Footer (status bar) height is fixed.
+const footerHeight = 2
+
+// Defune app style.
+var (
+	itemStyle      = style.W().M.Align(lipgloss.Center)
+	selectModifier = lipgloss.NewStyle().
+			Background(theme.G().PanelLight).
+			Foreground(theme.G().TextDark)
+	unselectModifier = lipgloss.NewStyle().Background(theme.G().PanelDark)
+
+	headerBox  = lipgloss.NewStyle().Background(theme.G().PanelDark)
+	footerBox  = lipgloss.NewStyle().Height(footerHeight).Background(theme.G().PanelDark)
+	leftBorder = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false)
+	mainBox    = lipgloss.NewStyle()
+)
 
 // Redis config use to store redis setup.
 type redisConfig struct {
@@ -82,31 +97,37 @@ func (a App) View() string {
 	header := make([]string, len(a.tabs))
 	for i := range a.tabs {
 		if i == a.csr {
-			header[i] = headerItemSelectedStyle.Render(a.tabs[i])
+			header[i] = itemStyle.Inherit(selectModifier).Render(a.tabs[i])
 		} else {
-			header[i] = headerItemStyle.Render(a.tabs[i])
+			header[i] = itemStyle.Inherit(unselectModifier).Render(a.tabs[i])
 		}
 	}
 
-	// Build main data.
+	// Render header data, fill the rest of the line.
+	renderHeader := headerBox.Width(a.width).Render(
+		lipgloss.JoinHorizontal(lipgloss.Center, header...),
+	)
+
+	// Build footer, fill the rest of line.
+	footer := leftBorder.Render(lipgloss.JoinVertical(lipgloss.Center,
+		"Redis",
+		fmt.Sprintf("%s:%d@%d", a.rdbConfig.host, a.rdbConfig.port, a.rdbConfig.db),
+	))
+	renderFooter := footerBox.Width(a.width).Render(footer)
+
+	// Calc main box height.
+	mainBoxHeight := a.height - lipgloss.Height(renderHeader) - lipgloss.Height(renderFooter)
+
+	// Render main data.
 	main := ""
 	if a.models[a.csr] != nil {
 		main = a.models[a.csr].View()
 	}
+	renderMain := mainBox.Height(mainBoxHeight).MaxHeight(mainBoxHeight).Render(main)
 
-	// Build footer.
-	footer := fmt.Sprintf("Redis %s:%d@%d", a.rdbConfig.host, a.rdbConfig.port, a.rdbConfig.db)
-
-	headerBox := lipgloss.NewStyle().Background(lipgloss.ANSIColor(4)).Width(a.width).Height(1)
-	footerBox := lipgloss.NewStyle().Height(1).
-		Background(lipgloss.ANSIColor(7)).
-		Width(a.width).Foreground(lipgloss.ANSIColor(0))
-	mainBox := lipgloss.NewStyle().Height(a.height - headerBox.GetHeight() - footerBox.GetHeight()).MaxHeight(a.height - 2)
-
+	// Render app.
 	return lipgloss.JoinVertical(lipgloss.Left,
-		headerBox.Render(lipgloss.JoinHorizontal(lipgloss.Center, header...)),
-		mainBox.Render(main),
-		footerBox.Render(footer),
+		renderHeader, renderMain, renderFooter,
 	)
 }
 
@@ -116,8 +137,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.height = msg.Height
 		a.width = msg.Width
-
-		msg.Height -= 2
 		return a.Broadcast(msg)
 
 	case msgs.RedisStateMsg:

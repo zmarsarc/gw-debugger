@@ -1,4 +1,4 @@
-package runnerstate
+package runnerwatcher
 
 import (
 	"context"
@@ -8,13 +8,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/redis/go-redis/v9"
 )
-
-type RunnerStateMsg interface {
-	RunnerName() string
-}
 
 // Use when fetch new runner state.
 type StateUpdateMsg struct {
@@ -25,43 +20,12 @@ type StateUpdateMsg struct {
 	Err       error
 }
 
-func (m StateUpdateMsg) RunnerName() string {
-	return m.Name
-}
-
-// Message to report runner heartbeat.
-type HeartbeatUpdateMsg struct {
-	Name     string
-	Lasttime string
-	Err      error
-}
-
-func (m HeartbeatUpdateMsg) RunnerName() string {
-	return m.Name
-}
-
 var (
 	// Time format use to parse ctime and utime in runner state.
 	timeParseFormat string = "2006-01-02T15:04:05.999999999"
 
 	// Format fo print time.
 	timePrintFormat string = "2006-01-02 15:04:05"
-)
-
-// Styles.
-var (
-	nameStyle  lipgloss.Style = lipgloss.NewStyle().Width(6).Bold(true)
-	modelStyle lipgloss.Style = lipgloss.NewStyle().Width(22)
-	timeStyle  lipgloss.Style = lipgloss.NewStyle().Width(22)
-	busyStyle  lipgloss.Style = lipgloss.NewStyle().Margin(0, 1).
-			Padding(0, 1).Background(lipgloss.ANSIColor(11)).Foreground(lipgloss.ANSIColor(0))
-	idleStyle lipgloss.Style = lipgloss.NewStyle().Margin(0, 1).
-			Padding(0, 1).Background(lipgloss.ANSIColor(10)).Foreground(lipgloss.ANSIColor(0))
-	deadStyle lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.ANSIColor(9)).
-			Margin(0, 1).Width(22).Align(lipgloss.Center).Foreground(lipgloss.ANSIColor(0))
-	aliveStyle lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.ANSIColor(10)).
-			Margin(0, 1).Width(22).Align(lipgloss.Center).Foreground(lipgloss.ANSIColor(0))
-	pendingTaskStyle = lipgloss.NewStyle().Width(5).Align(lipgloss.Center).Background(lipgloss.ANSIColor(7)).Foreground(lipgloss.ANSIColor(0)).Margin(0, 1)
 )
 
 // Command update runner state.
@@ -100,14 +64,6 @@ func updateRunnerState(name string, rdb *redis.Client) tea.Cmd {
 	}
 }
 
-// Delay run command after dealy_s seconds.
-func delayRunCommand(delay_s int, cmd tea.Cmd) tea.Cmd {
-	return func() tea.Msg {
-		time.Sleep(time.Duration(delay_s) * time.Second)
-		return cmd()
-	}
-}
-
 func puttyTime(t time.Time) string {
 	d := time.Since(t)
 
@@ -129,7 +85,8 @@ func puttyTime(t time.Time) string {
 	return t.Format(timePrintFormat)
 }
 
-type Model struct {
+// The model use to storage runner state and display.
+type state struct {
 	Name      string
 	Model     string
 	Ctime     time.Time
@@ -143,15 +100,15 @@ type Model struct {
 	rdb *redis.Client
 }
 
-func New(name string, rdb *redis.Client) Model {
-	return Model{Name: name, rdb: rdb}
+func newState(name string, rdb *redis.Client) state {
+	return state{Name: name, rdb: rdb}
 }
 
-func (s Model) Init() tea.Cmd {
-	return tea.Batch(updateRunnerState(s.Name, s.rdb))
+func (s state) Init() tea.Cmd {
+	return updateRunnerState(s.Name, s.rdb)
 }
 
-func (s Model) View() string {
+func (s state) View() string {
 
 	if s.err != nil {
 		return fmt.Sprintf("%s Update error last time %s", s.Name, s.err.Error())
@@ -163,36 +120,40 @@ func (s Model) View() string {
 
 	switch {
 	case s.Alive && s.Heartbeat != nil:
-		text := fmt.Sprintf("ALIVE - hb %ds before", int(math.Ceil(time.Since(*s.Heartbeat).Seconds())))
-		builder.WriteString(aliveStyle.Render(text))
+		text := fmt.Sprintf("ALIVE(%ds)", int(math.Ceil(time.Since(*s.Heartbeat).Seconds())))
+		builder.WriteString(heartbeatStyle.Inherit(okColor).Render(text))
 	case s.Alive && s.Heartbeat == nil:
-		builder.WriteString(deadStyle.Render("ALIVE- no hb"))
+		builder.WriteString(heartbeatStyle.Inherit(errorColor).Render("ALIVE(-)"))
 	case !s.Alive && s.Heartbeat != nil:
-		text := fmt.Sprintf("DEAD - hb %ds before", int(math.Ceil(time.Since(*s.Heartbeat).Seconds())))
-		builder.WriteString(deadStyle.Render(text))
+		text := fmt.Sprintf("DEAD(%ds)", int(math.Ceil(time.Since(*s.Heartbeat).Seconds())))
+		builder.WriteString(heartbeatStyle.Inherit(errorColor).Render(text))
 	case !s.Alive && s.Heartbeat == nil:
-		builder.WriteString(deadStyle.Render("DEAD - no hb"))
+		builder.WriteString(heartbeatStyle.Inherit(errorColor).Render("DEAD(-)"))
 	}
 
 	if s.Busy {
-		builder.WriteString(busyStyle.Render("BUSY"))
+		builder.WriteString(stateStyle.Inherit(warningColor).Render("BUSY"))
 	} else {
-		builder.WriteString(idleStyle.Render("IDLE"))
+		builder.WriteString(stateStyle.Inherit(okColor).Render("IDLE"))
 	}
 
 	if s.Pending != nil {
-		builder.WriteString(pendingTaskStyle.Render(fmt.Sprintf("%d", s.Pending.Count)))
+		if s.Pending.Count != 0 {
+			builder.WriteString(pendingStyle.Inherit(textInverse).Render(fmt.Sprintf("%d", s.Pending.Count)))
+		} else {
+			builder.WriteString(pendingStyle.Render(fmt.Sprintf("%d", s.Pending.Count)))
+		}
 	} else {
-		builder.WriteString(pendingTaskStyle.Render("0"))
+		builder.WriteString(pendingStyle.Render("-"))
 	}
 
-	builder.WriteString(timeStyle.Render(puttyTime(s.Ctime)))
-	builder.WriteString(timeStyle.Render(puttyTime(s.Utime)))
+	builder.WriteString(ctimeStyle.Render(puttyTime(s.Ctime)))
+	builder.WriteString(utimeStyle.Render(puttyTime(s.Utime)))
 
 	return builder.String()
 }
 
-func (s Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (s state) Update(msg tea.Msg) (state, tea.Cmd) {
 	s.err = nil
 
 	switch msg := msg.(type) {
@@ -239,23 +200,4 @@ func (s Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return s, nil
 	}
-}
-
-func Header() string {
-	var builder strings.Builder
-	liveStyle := lipgloss.NewStyle().Margin(0, 1).Width(22).Align(lipgloss.Center)
-	busyStyle := lipgloss.NewStyle().Margin(0, 1).Padding(0, 1)
-	pendingStyle := lipgloss.NewStyle().Width(7).Align(lipgloss.Center)
-
-	builder.WriteString(nameStyle.UnsetBold().Render("NAME"))
-	builder.WriteString(modelStyle.Align(lipgloss.Center).Render("MODEL"))
-	builder.WriteString(liveStyle.Align(lipgloss.Center).Render("LIFE"))
-
-	builder.WriteString(busyStyle.Render("BUSY"))
-	builder.WriteString(pendingStyle.Render("PENDING"))
-
-	builder.WriteString(timeStyle.Align(lipgloss.Center).Render("CTIME"))
-	builder.WriteString(timeStyle.Align(lipgloss.Center).Render("UTIME"))
-
-	return builder.String()
 }
