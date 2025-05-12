@@ -89,7 +89,12 @@ func NewApp() App {
 }
 
 func (a App) Init() tea.Cmd {
-	return connectRedis(&a.rdbConfig)
+	var cmds []tea.Cmd
+	cmds = append(cmds, connectRedis(&a.rdbConfig))
+	for i := range a.models {
+		cmds = append(cmds, a.models[i].Init())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a App) View() string {

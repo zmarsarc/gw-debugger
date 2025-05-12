@@ -2,42 +2,57 @@ package keylist
 
 import (
 	"context"
+	"fmt"
 	"gw/dispatcher/debugger/msgs"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/redis/go-redis/v9"
 )
 
 func New() Model {
-	return Model{
-		rdb:  nil,
-		keys: nil,
-		err:  nil,
+	ipt := textinput.New()
+	ipt.Focus()
+
+	m := Model{
+		rdb:   nil,
+		keys:  nil,
+		err:   nil,
+		input: ipt,
 	}
+	return m
 }
 
 type Model struct {
-	rdb      *redis.Client
-	keys     []string
-	err      error
-	pageSize int
-	csr      int
+	rdb       *redis.Client
+	keys      []string
+	err       error
+	pageSize  int
+	csr       int
+	input     textinput.Model
+	lastValue string
 }
 
 func (m Model) View() string {
+	var builder strings.Builder
+	builder.WriteString(m.input.View() + "\n")
+
 	if m.rdb == nil {
-		return "Redis disconnected."
+		builder.WriteString("Redis disconnected.")
+		return builder.String()
 	}
 	if len(m.keys) == 0 {
-		return "No keys."
+		builder.WriteString("No keys.")
+		return builder.String()
 	}
 	if m.err != nil {
-		return "Err"
+		builder.WriteString(m.err.Error())
+		return builder.String()
 	}
 
 	pos, size := m.csr, m.pageSize
-	var builder strings.Builder
+
 	for pos < len(m.keys) && size > 0 {
 		builder.WriteString(m.keys[pos] + "\n")
 		pos++
@@ -46,14 +61,14 @@ func (m Model) View() string {
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return textinput.Blink
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgs.RedisStateMsg:
 		m.rdb = msg.Client
-		return m, queryKeysCmd(m.rdb)
+		return m, nil
 
 	case keyUpdateMessage:
 		m.keys = msg.Keys
@@ -73,10 +88,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.csr < len(m.keys)-1 {
 				m.csr++
 			}
+		case "enter":
+			return m, queryKeysCmd(m.rdb, m.input.Value())
 		}
 	}
 
-	return m, nil
+	var c tea.Cmd
+	m.input, c = m.input.Update(msg)
+
+	if m.lastValue != m.input.Value() {
+		if m.input.Value() == "" {
+			m.keys = []string{}
+			m.err = nil
+			m.csr = 0
+			return m, c
+		}
+		if m.input.Value() == "*" {
+			m.lastValue = "*"
+		} else {
+			m.lastValue = fmt.Sprintf("*%s*", m.input.Value())
+		}
+
+		return m, tea.Batch(c, queryKeysCmd(m.rdb, m.lastValue))
+	}
+
+	return m, c
 }
 
 type keyUpdateMessage struct {
@@ -84,9 +120,9 @@ type keyUpdateMessage struct {
 	Err  error
 }
 
-func queryKeysCmd(rdb *redis.Client) tea.Cmd {
+func queryKeysCmd(rdb *redis.Client, patten string) tea.Cmd {
 	return func() tea.Msg {
-		keys, err := rdb.Keys(context.Background(), "*").Result()
+		keys, err := rdb.Keys(context.Background(), patten).Result()
 		return keyUpdateMessage{Keys: keys, Err: err}
 	}
 }
