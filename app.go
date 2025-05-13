@@ -30,6 +30,11 @@ var (
 	mainBox    = lipgloss.NewStyle()
 )
 
+// Interface for component which can update status bar message.
+type Statusbar interface {
+	StatusBarView() string
+}
+
 // Redis config use to store redis setup.
 type redisConfig struct {
 	host     string
@@ -120,7 +125,7 @@ func (a App) View() string {
 	))
 	statusBar := ""
 	switch model := a.models[a.csr].(type) {
-	case runnerwatcher.Model:
+	case Statusbar:
 		statusBar = model.StatusBarView()
 	}
 	space := a.width - lipgloss.Width(redisStatus)

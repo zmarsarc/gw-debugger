@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 	"gw/dispatcher/debugger/msgs"
+	"gw/dispatcher/debugger/style"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/redis/go-redis/v9"
 )
+
+const textInputHeght = 1
+
+var statusbarStyle = style.W().M.Padding(0, 1)
 
 func New() Model {
 	ipt := textinput.New()
@@ -60,6 +65,10 @@ func (m Model) View() string {
 	return builder.String()
 }
 
+func (m Model) StatusBarView() string {
+	return statusbarStyle.Render(fmt.Sprintf("%d results", len(m.keys)))
+}
+
 func (m Model) Init() tea.Cmd {
 	return textinput.Blink
 }
@@ -73,9 +82,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case keyUpdateMessage:
 		m.keys = msg.Keys
 		m.err = msg.Err
+		return m, nil
 
 	case tea.WindowSizeMsg:
-		m.pageSize = msg.Height
+		m.pageSize = msg.Height - textInputHeght
 		return m, nil
 
 	case tea.KeyMsg:
@@ -84,10 +94,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.csr > 0 {
 				m.csr--
 			}
+			return m, nil
 		case "down":
-			if m.csr < len(m.keys)-1 {
+			if m.csr < len(m.keys)-(m.pageSize/2) {
 				m.csr++
 			}
+			return m, nil
 		case "enter":
 			return m, queryKeysCmd(m.rdb, m.input.Value())
 		}
