@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"gw/dispatcher/debugger/keylist"
 	"gw/dispatcher/debugger/msgs"
+	"gw/dispatcher/debugger/queue"
 	"gw/dispatcher/debugger/runnerwatcher"
 	"gw/dispatcher/debugger/style"
 	"gw/dispatcher/debugger/theme"
@@ -80,10 +81,12 @@ func NewApp() App {
 		tabs: []string{
 			"runner",
 			"raw keys",
+			"queue",
 		},
 		models: []tea.Model{
 			runnerwatcher.New(),
 			keylist.New(),
+			queue.New(),
 		},
 		csr: 0,
 
