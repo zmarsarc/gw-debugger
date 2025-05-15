@@ -80,7 +80,8 @@ func New() Model {
 }
 
 type Model struct {
-	states map[string]state
+	states      map[string]state
+	streamState msgs.StreamUpdateMsg
 
 	height int
 	width  int
@@ -107,6 +108,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			return m, nil
 		}
+
+	case msgs.StreamUpdateMsg:
+		m.streamState = msg
+		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -206,7 +211,22 @@ func (m Model) StatusBarView() string {
 		return true
 	})
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, total, alive, dead, idle, busy)
+	border := lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true)
+	dispatch := lipgloss.JoinVertical(lipgloss.Center,
+		statusStyle.Render("WAIT"),
+		statusStyle.Render(fmt.Sprintf("%d", m.streamState.TaskCreate.Pending+m.streamState.TaskCreate.Lag)))
+	postprocess := lipgloss.JoinVertical(lipgloss.Center,
+		statusStyle.Render("POST"),
+		statusStyle.Render(fmt.Sprintf("%d", m.streamState.InferDown.Pending+m.streamState.InferDown.Lag)),
+	)
+	notify := lipgloss.JoinVertical(lipgloss.Center,
+		statusStyle.Render("NOTY"),
+		statusStyle.Render(fmt.Sprintf("%d", m.streamState.ProcessDown.Pending+m.streamState.ProcessDown.Lag)),
+	)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		border.Render(lipgloss.JoinHorizontal(lipgloss.Top, dispatch, postprocess, notify)),
+		total, alive, dead, idle, busy)
 }
 
 func buildStatusBlock(title string, states map[string]state, cond func(*state) bool) string {
